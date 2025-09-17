@@ -1,8 +1,11 @@
 package com.example.purchase_order.purchase_order_apps.controller;
 
 import com.example.purchase_order.purchase_order_apps.entity.PurchaseOrderHeader;
+import com.example.purchase_order.purchase_order_apps.entity.dto.PoHeaderRequest;
+import com.example.purchase_order.purchase_order_apps.entity.dto.PoHeaderResponse;
 import com.example.purchase_order.purchase_order_apps.response.ApiResponse;
 import com.example.purchase_order.purchase_order_apps.service.PurchaseOrderService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -11,7 +14,6 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/po")
 public class PurchaseOrderController {
     private final PurchaseOrderService ps;
-
     public PurchaseOrderController(PurchaseOrderService ps) { this.ps = ps; }
 
     @GetMapping
@@ -26,29 +28,19 @@ public class PurchaseOrderController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse> create(@RequestBody PurchaseOrderHeader po) {
-        try {
-            PurchaseOrderHeader saved = ps.save(po);
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(new ApiResponse(201, "PO created successfully", saved));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ApiResponse(400, e.getMessage(), null));
-        }
+    public ResponseEntity<ApiResponse> create(@RequestBody @Valid PoHeaderRequest req,
+                                              @RequestHeader(value="X-User", required=false) String user) {
+        PoHeaderResponse resp = ps.create(req, user == null ? "system" : user);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(new ApiResponse(201, "PO created", resp));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<ApiResponse> update(@PathVariable Long id, @RequestBody PurchaseOrderHeader po) {
-        try {
-            PurchaseOrderHeader updated = ps.update(id, po);
-            return ResponseEntity.ok(new ApiResponse(200, "PO updated successfully", updated));
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ApiResponse(404, e.getMessage(), null));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ApiResponse(400, "Failed to update PO", null));
-        }
+    public ResponseEntity<ApiResponse> update(@PathVariable Long id,
+                                              @RequestBody @Valid PoHeaderRequest req,
+                                              @RequestHeader(value="X-User", required=false) String user) {
+        PoHeaderResponse resp = ps.update(id, req, user == null ? "system" : user);
+        return ResponseEntity.ok(new ApiResponse(200, "PO updated", resp));
     }
 
     @DeleteMapping("/{id}")

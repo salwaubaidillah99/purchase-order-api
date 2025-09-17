@@ -3,6 +3,10 @@ package com.example.purchase_order.purchase_order_apps.service;
 import com.example.purchase_order.purchase_order_apps.entity.Item;
 import com.example.purchase_order.purchase_order_apps.entity.PurchaseOrderDetail;
 import com.example.purchase_order.purchase_order_apps.entity.PurchaseOrderHeader;
+import com.example.purchase_order.purchase_order_apps.entity.dto.PoDetailRequest;
+import com.example.purchase_order.purchase_order_apps.entity.dto.PoDetailResponse;
+import com.example.purchase_order.purchase_order_apps.entity.dto.PoHeaderRequest;
+import com.example.purchase_order.purchase_order_apps.entity.dto.PoHeaderResponse;
 import com.example.purchase_order.purchase_order_apps.repository.ItemRepository;
 import com.example.purchase_order.purchase_order_apps.repository.PurchaseOrderDetailRepository;
 import com.example.purchase_order.purchase_order_apps.repository.PurchaseOrderHeaderRepository;
@@ -10,17 +14,20 @@ import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class PurchaseOrderService {
+
     private final PurchaseOrderHeaderRepository pohRepo;
-    private final PurchaseOrderDetailRepository podRepo;
     private final ItemRepository itemRepo;
 
-    public PurchaseOrderService(PurchaseOrderHeaderRepository pohRepo, PurchaseOrderDetailRepository podRepo, ItemRepository itemRepo) {
-        this.pohRepo = pohRepo; this.podRepo = podRepo; this.itemRepo = itemRepo;
+    public PurchaseOrderService(PurchaseOrderHeaderRepository pohRepo,
+                                PurchaseOrderDetailRepository podRepo,
+                                ItemRepository itemRepo) {
+        this.pohRepo = pohRepo;
+        this.itemRepo = itemRepo;
     }
 
     public List<PurchaseOrderHeader> getAll() { return pohRepo.findAll(); }
@@ -28,38 +35,130 @@ public class PurchaseOrderService {
     public Optional<PurchaseOrderHeader> getById(Long id) { return pohRepo.findById(id); }
 
     @Transactional
-    public PurchaseOrderHeader save(PurchaseOrderHeader header) {
-        if (header.getDetails()==null || header.getDetails().isEmpty())
+    public PoHeaderResponse create(PoHeaderRequest req, String user) {
+        PurchaseOrderHeader h = new PurchaseOrderHeader();
+        h.setDateTime(req.getDateTime() != null ? req.getDateTime() : LocalDateTime.now());
+        h.setDescription(req.getDescription());
+        h.setCreatedBy(user);
+        h.setUpdatedBy(user);
+
+        if (req.getDetails()==null || req.getDetails().isEmpty())
             throw new RuntimeException("PO details required");
+
         int totalPrice = 0, totalCost = 0;
-        for (PurchaseOrderDetail d : header.getDetails()) {
-            Item item = itemRepo.findById(d.getItem().getId())
-                    .orElseThrow(() -> new RuntimeException("Item not found: "+d.getItem().getId()));
+        List<PurchaseOrderDetail> details = new ArrayList<>();
+        for (PoDetailRequest r : req.getDetails()) {
+            Item item = itemRepo.findById(r.getItemId())
+                    .orElseThrow(() -> new RuntimeException("Item not found: " + r.getItemId()));
+            PurchaseOrderDetail d = new PurchaseOrderDetail();
+            d.setPoHeader(h);
             d.setItem(item);
-            d.setPoHeader(header);
-            if (d.getItemQty()<=0) throw new RuntimeException("itemQty must be > 0");
-            if (d.getItemPrice()<0 || d.getItemCost()<0) throw new RuntimeException("price/cost invalid");
-            totalPrice += d.getItemQty()*d.getItemPrice();
-            totalCost  += d.getItemQty()*d.getItemCost();
+            d.setItemQty(r.getQty());
+            d.setItemCost(r.getCost());
+            d.setItemPrice(r.getPrice());
+            d.setCreatedBy(user);
+            d.setUpdatedBy(user);
+            details.add(d);
+
+            totalPrice += r.getQty() * r.getPrice();
+            totalCost  += r.getQty() * r.getCost();
         }
-        header.setTotalPrice(totalPrice);
-        header.setTotalCost(totalCost);
-        header.setUpdatedDateTime(LocalDateTime.now());
-        if (header.getCreatedDateTime()==null) header.setCreatedDateTime(LocalDateTime.now());
-        return pohRepo.save(header);
+        h.setDetails(details);
+        h.setTotalPrice(totalPrice);
+        h.setTotalCost(totalCost);
+        h.setUpdatedDateTime(LocalDateTime.now());
+        if (h.getCreatedDateTime()==null) h.setCreatedDateTime(LocalDateTime.now());
+
+        PurchaseOrderHeader saved = pohRepo.saveAndFlush(h);
+        PurchaseOrderHeader reloaded = pohRepo.findById(saved.getId())
+                .orElseThrow(() -> new RuntimeException("Saved PO not found"));
+        return toResponse(reloaded);
     }
 
     @Transactional
-    public PurchaseOrderHeader update(Long id, PurchaseOrderHeader incoming) {
-        PurchaseOrderHeader header = pohRepo.findById(id).orElseThrow(() -> new RuntimeException("PO not found"));
-        header.setDateTime(incoming.getDateTime());
-        header.setDescription(incoming.getDescription());
-        header.getDetails().clear();
-        header.getDetails().addAll(incoming.getDetails());
-        for (PurchaseOrderDetail d : header.getDetails()) d.setPoHeader(header);
-        return save(header); 
+    public PoHeaderResponse update(Long id, PoHeaderRequest req, String user) {
+        PurchaseOrderHeader h = pohRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("PO not found"));
+
+        h.setDateTime(req.getDateTime() != null ? req.getDateTime() : h.getDateTime());
+        h.setDescription(req.getDescription());
+        h.setUpdatedBy(user);
+        h.setUpdatedDateTime(LocalDateTime.now());
+
+        Map<Long, PurchaseOrderDetail> existingById = h.getDetails().stream()
+                .filter(d -> d.getId() != null)
+                .collect(Collectors.toMap(PurchaseOrderDetail::getId, d -> d));
+
+        List<PurchaseOrderDetail> newState = new ArrayList<>();
+
+        int totalPrice = 0, totalCost = 0;
+
+        for (PoDetailRequest r : req.getDetails()) {
+            Item item = itemRepo.findById(r.getItemId())
+                    .orElseThrow(() -> new RuntimeException("Item not found: " + r.getItemId()));
+
+            PurchaseOrderDetail d;
+            if (r.getId() != null) {
+                d = existingById.remove(r.getId());
+                if (d == null) {
+                    throw new RuntimeException("Detail id not found: " + r.getId());
+                }
+
+                d.setItem(item);
+                d.setItemQty(r.getQty());
+                d.setItemCost(r.getCost());
+                d.setItemPrice(r.getPrice());
+                d.setUpdatedBy(user);
+                d.setUpdatedDatetime(LocalDateTime.now());
+            } else {
+
+                d = new PurchaseOrderDetail();
+                d.setPoHeader(h);
+                d.setItem(item);
+                d.setItemQty(r.getQty());
+                d.setItemCost(r.getCost());
+                d.setItemPrice(r.getPrice());
+                d.setCreatedBy(h.getCreatedBy());
+                d.setUpdatedBy(user);
+            }
+            newState.add(d);
+
+            totalPrice += r.getQty() * r.getPrice();
+            totalCost  += r.getQty() * r.getCost();
+        }
+
+        Set<Long> toRemove = existingById.keySet();
+        h.getDetails().removeIf(d -> d.getId() != null && toRemove.contains(d.getId()));
+        h.getDetails().clear();
+        for (PurchaseOrderDetail d : newState) {
+            d.setPoHeader(h);
+            h.getDetails().add(d);
+        }
+
+        h.setTotalPrice(totalPrice);
+        h.setTotalCost(totalCost);
+
+        PurchaseOrderHeader saved = pohRepo.saveAndFlush(h);
+        PurchaseOrderHeader reloaded = pohRepo.findById(saved.getId()).orElseThrow();
+        return toResponse(reloaded);
     }
 
-    public void delete(Long id) { pohRepo.deleteById(id); }
-}
 
+    private PoHeaderResponse toResponse(PurchaseOrderHeader h) {
+        List<PoDetailResponse> det = h.getDetails().stream()
+                .map(d -> new PoDetailResponse(
+                        d.getId(),
+                        d.getItem().getId(),
+                        d.getItem().getName(),
+                        d.getItemQty(),
+                        d.getItemCost(),
+                        d.getItemPrice()))
+                .toList();
+        return new PoHeaderResponse(
+                h.getId(), h.getDateTime(), h.getDescription(),
+                h.getTotalPrice(), h.getTotalCost(), det);
+    }
+    public void delete(Long id) { pohRepo.deleteById(id);
+    }
+
+}
