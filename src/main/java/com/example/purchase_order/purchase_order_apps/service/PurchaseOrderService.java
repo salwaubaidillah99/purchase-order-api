@@ -3,6 +3,7 @@ package com.example.purchase_order.purchase_order_apps.service;
 import com.example.purchase_order.purchase_order_apps.entity.Item;
 import com.example.purchase_order.purchase_order_apps.entity.PurchaseOrderDetail;
 import com.example.purchase_order.purchase_order_apps.entity.PurchaseOrderHeader;
+import com.example.purchase_order.purchase_order_apps.entity.User;
 import com.example.purchase_order.purchase_order_apps.entity.dto.PoDetailRequest;
 import com.example.purchase_order.purchase_order_apps.entity.dto.PoDetailResponse;
 import com.example.purchase_order.purchase_order_apps.entity.dto.PoHeaderRequest;
@@ -10,6 +11,7 @@ import com.example.purchase_order.purchase_order_apps.entity.dto.PoHeaderRespons
 import com.example.purchase_order.purchase_order_apps.repository.ItemRepository;
 import com.example.purchase_order.purchase_order_apps.repository.PurchaseOrderDetailRepository;
 import com.example.purchase_order.purchase_order_apps.repository.PurchaseOrderHeaderRepository;
+import com.example.purchase_order.purchase_order_apps.repository.UserRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
@@ -22,12 +24,15 @@ public class PurchaseOrderService {
 
     private final PurchaseOrderHeaderRepository pohRepo;
     private final ItemRepository itemRepo;
+    private final UserRepository userRepo;
 
     public PurchaseOrderService(PurchaseOrderHeaderRepository pohRepo,
                                 PurchaseOrderDetailRepository podRepo,
-                                ItemRepository itemRepo) {
+                                ItemRepository itemRepo,
+                                UserRepository userRepo) {
         this.pohRepo = pohRepo;
         this.itemRepo = itemRepo;
+        this.userRepo = userRepo;
     }
 
     public List<PurchaseOrderHeader> getAll() { return pohRepo.findAll(); }
@@ -35,15 +40,21 @@ public class PurchaseOrderService {
     public Optional<PurchaseOrderHeader> getById(Long id) { return pohRepo.findById(id); }
 
     @Transactional
-    public PoHeaderResponse create(PoHeaderRequest req, String user) {
+    public PoHeaderResponse create(PoHeaderRequest req, String user, Long authUserId) {
         PurchaseOrderHeader h = new PurchaseOrderHeader();
         h.setDateTime(req.getDateTime() != null ? req.getDateTime() : LocalDateTime.now());
         h.setDescription(req.getDescription());
         h.setCreatedBy(user);
-        h.setUpdatedBy(user);
+        h.setCreatedDateTime(LocalDateTime.now()); // ensure created set
 
-        if (req.getDetails()==null || req.getDetails().isEmpty())
+        if (req.getDetails() == null || req.getDetails().isEmpty())
             throw new RuntimeException("PO details required");
+
+        if (authUserId != null) {
+            User u = userRepo.findById(authUserId) // now Long
+                    .orElseThrow(() -> new RuntimeException("User not found: " + authUserId));
+            h.setUser(u);
+        }
 
         int totalPrice = 0, totalCost = 0;
         List<PurchaseOrderDetail> details = new ArrayList<>();
@@ -57,7 +68,8 @@ public class PurchaseOrderService {
             d.setItemCost(r.getCost());
             d.setItemPrice(r.getPrice());
             d.setCreatedBy(user);
-            d.setUpdatedBy(user);
+            d.setCreatedDatetime(LocalDateTime.now());
+            // DO NOT set updated* on create
             details.add(d);
 
             totalPrice += r.getQty() * r.getPrice();
@@ -66,14 +78,11 @@ public class PurchaseOrderService {
         h.setDetails(details);
         h.setTotalPrice(totalPrice);
         h.setTotalCost(totalCost);
-        h.setUpdatedDateTime(LocalDateTime.now());
-        if (h.getCreatedDateTime()==null) h.setCreatedDateTime(LocalDateTime.now());
 
         PurchaseOrderHeader saved = pohRepo.saveAndFlush(h);
-        PurchaseOrderHeader reloaded = pohRepo.findById(saved.getId())
-                .orElseThrow(() -> new RuntimeException("Saved PO not found"));
-        return toResponse(reloaded);
+        return toResponse(saved);
     }
+
 
     @Transactional
     public PoHeaderResponse update(Long id, PoHeaderRequest req, String user) {
@@ -90,7 +99,6 @@ public class PurchaseOrderService {
                 .collect(Collectors.toMap(PurchaseOrderDetail::getId, d -> d));
 
         List<PurchaseOrderDetail> newState = new ArrayList<>();
-
         int totalPrice = 0, totalCost = 0;
 
         for (PoDetailRequest r : req.getDetails()) {
@@ -100,10 +108,7 @@ public class PurchaseOrderService {
             PurchaseOrderDetail d;
             if (r.getId() != null) {
                 d = existingById.remove(r.getId());
-                if (d == null) {
-                    throw new RuntimeException("Detail id not found: " + r.getId());
-                }
-
+                if (d == null) throw new RuntimeException("Detail id not found: " + r.getId());
                 d.setItem(item);
                 d.setItemQty(r.getQty());
                 d.setItemCost(r.getCost());
@@ -111,7 +116,6 @@ public class PurchaseOrderService {
                 d.setUpdatedBy(user);
                 d.setUpdatedDatetime(LocalDateTime.now());
             } else {
-
                 d = new PurchaseOrderDetail();
                 d.setPoHeader(h);
                 d.setItem(item);
@@ -119,7 +123,9 @@ public class PurchaseOrderService {
                 d.setItemCost(r.getCost());
                 d.setItemPrice(r.getPrice());
                 d.setCreatedBy(h.getCreatedBy());
+                d.setCreatedDatetime(LocalDateTime.now());
                 d.setUpdatedBy(user);
+                d.setUpdatedDatetime(LocalDateTime.now());
             }
             newState.add(d);
 
@@ -129,6 +135,8 @@ public class PurchaseOrderService {
 
         Set<Long> toRemove = existingById.keySet();
         h.getDetails().removeIf(d -> d.getId() != null && toRemove.contains(d.getId()));
+
+        // Replace state
         h.getDetails().clear();
         for (PurchaseOrderDetail d : newState) {
             d.setPoHeader(h);
@@ -139,8 +147,7 @@ public class PurchaseOrderService {
         h.setTotalCost(totalCost);
 
         PurchaseOrderHeader saved = pohRepo.saveAndFlush(h);
-        PurchaseOrderHeader reloaded = pohRepo.findById(saved.getId()).orElseThrow();
-        return toResponse(reloaded);
+        return toResponse(saved);
     }
 
 

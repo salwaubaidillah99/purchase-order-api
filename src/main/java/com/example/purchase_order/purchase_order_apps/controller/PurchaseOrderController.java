@@ -38,8 +38,11 @@ public class PurchaseOrderController {
     public ResponseEntity<ApiResponse> create(@RequestBody @Valid PoHeaderRequest req,
                                               HttpServletRequest http) {
         String audit = (String) http.getAttribute("authAuditName");
+
         if (audit == null) audit = "system";
-        PoHeaderResponse resp = ps.create(req, audit);
+        Long authUserId = (Long) http.getAttribute("authUserId"); // ambil dari filter
+
+        PoHeaderResponse resp = ps.create(req, audit, authUserId); // pass ke service
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new ApiResponse(201, "PO created", resp));
     }
