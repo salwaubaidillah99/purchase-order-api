@@ -14,7 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@ActiveProfiles("test") // gunakan application-test.yml jika ada
+@ActiveProfiles("test")
 class AuthFlowIntegrationTest {
 
     @Autowired MockMvc mvc;
@@ -42,9 +42,9 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        // extract token sederhana
+
         String token = om.readTree(loginResp).path("data").path("token").asText();
-        // akses protected
+
         mvc.perform(get("/api/users/1")
                         .header("Authorization","Bearer " + token))
                 .andExpect(status().isOk()); // atau 404 jika user id 1 tidak ada, sesuaikan

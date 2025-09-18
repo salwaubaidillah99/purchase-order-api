@@ -48,9 +48,9 @@ public class ItemController {
         String audit = (String) http.getAttribute("authAuditName");
         if (audit == null) audit = "system";
         body.setCreatedBy(audit);
-        body.setUpdatedBy(audit);
+        body.setUpdatedBy(null);
         body.setCreatedDatetime(LocalDateTime.now());
-        body.setUpdatedDatetime(LocalDateTime.now());
+        body.setUpdatedDatetime(null);
         var saved = itemRepo.save(body);
         return ResponseEntity.status(HttpStatus.CREATED).body(new ApiResponse(201, "Item created", saved));
     }

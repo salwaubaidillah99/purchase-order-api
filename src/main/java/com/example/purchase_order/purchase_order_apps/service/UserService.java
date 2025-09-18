@@ -17,9 +17,9 @@ import java.util.Optional;
 @Service
 public class UserService {
     private final UserRepository userRepo;
-    private final JwtUtil jwtUtil; // ADDED
+    private final JwtUtil jwtUtil;
 
-    public UserService(UserRepository userRepo, JwtUtil jwtUtil) { // ADDED
+    public UserService(UserRepository userRepo, JwtUtil jwtUtil) {
         this.userRepo = userRepo;
         this.jwtUtil = jwtUtil;
     }
